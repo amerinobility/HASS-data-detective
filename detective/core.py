@@ -1,12 +1,14 @@
 """
 Classes and functions for parsing home-assistant data.
 """
+from urllib.parse import urlparse
+from typing import List
 
-from . import config, functions
 import matplotlib.pyplot as plt
 import pandas as pd
 from sqlalchemy import create_engine, text
-from typing import List
+
+from . import config, functions
 
 
 def db_from_hass_config(path=None, **kwargs):
@@ -16,6 +18,22 @@ def db_from_hass_config(path=None, **kwargs):
 
     url = config.db_url_from_hass_config(path)
     return HassDatabase(url, **kwargs)
+
+
+def get_db_type(url):
+    return urlparse(url).scheme.split("+")[0]
+
+
+def stripped_db_url(url):
+    """Return a version of the DB url with the password stripped out."""
+    parsed = urlparse(url)
+
+    if parsed.password is None:
+        return url
+
+    return parsed._replace(
+        netloc="{}:***@{}".format(parsed.username, parsed.hostname)
+    ).geturl()
 
 
 class HassDatabase:
@@ -31,48 +49,59 @@ class HassDatabase:
         url : str
             The URL to the database.
         """
-        self._url = url
+        self.url = url
+
         self._master_df = None
         self._domains = None
         self._entities = None
         try:
             self.engine = create_engine(url)
-            print("Successfully connected to database")
+            print("Successfully connected to database", stripped_db_url(url))
             if fetch_entities:
                 self.fetch_entities()
         except Exception as exc:
+            if isinstance(exc, ImportError):
+                raise RuntimeError(
+                    "The right dependency to connect to your database is "
+                    "missing. Please make sure that it is installed."
+                )
+
             print(exc)
             raise
 
-    def perform_query(self, query):
+        self.db_type = get_db_type(url)
+
+    def perform_query(self, query, **params):
         """Perform a query, where query is a string."""
         try:
-            return self.engine.execute(query)
+            return self.engine.execute(query, params)
         except:
             print("Error with query: {}".format(query))
             raise
 
     def fetch_entities(self):
-        """Fetch unique entities which have data (COUNT>0)."""
+        """Fetch entities for which we have data."""
         query = text(
             """
-            SELECT entity_id, COUNT(*)
+            SELECT entity_id
             FROM states
             GROUP BY entity_id
-            ORDER by 2 DESC
             """
         )
         response = self.perform_query(query)
-        entities = [e[0] for e in list(response)]
-        print("There are {} entities with data".format(len(entities)))
 
         # Parse the domains from the entities.
-        self._domains = list(set([e.split(".")[0] for e in entities]))
-        self._entities = {}
+        entities = {}
+        domains = set()
 
-        # Parse entities into a dict indexed by domain.
-        for d in self._domains:
-            self._entities[d] = [e for e in entities if e.split(".")[0] == d]
+        for [entity] in response:
+            domain = entity.split(".")[0]
+            domains.add(domain)
+            entities.setdefault(domain, []).append(entity)
+
+        self._domains = list(domains)
+        self._entities = entities
+        print("There are {} entities with data".format(len(entities)))
 
     def fetch_data_by_list(self, entities: List[str], limit=50000):
         """
@@ -97,16 +126,16 @@ class HassDatabase:
             """
             SELECT entity_id, state, last_changed
             FROM states
-            WHERE entity_id in {}
+            WHERE entity_id in ({})
             AND NOT state='unknown'
             ORDER BY last_changed DESC
-            LIMIT {}
+            LIMIT :limit
             """.format(
-                tuple(entities), limit
+                ",".join("'{}'".format(ent) for ent in entities)
             )
         )
 
-        response = self.perform_query(query)
+        response = self.perform_query(query, limit=limit)
         df = pd.DataFrame(response.fetchall())
         df.columns = ["entity", "state", "last_changed"]
         df = df.set_index("last_changed")  # Set the index on datetime
@@ -125,24 +154,23 @@ class HassDatabase:
 
     def fetch_all_data(self, limit=50000):
         """
-        Fetch data for all enetites.
+        Fetch data for all entities.
         """
         # Query text
         query = text(
             """
             SELECT domain, entity_id, state, last_changed
             FROM states
-            WHERE NOT state='unknown'
+            WHERE
+                state NOT IN ('unknown', 'unavailable')
             ORDER BY last_changed DESC
-            LIMIT {}
-            """.format(
-                limit
-            )
+            LIMIT :limit
+            """
         )
 
         try:
             print("Querying the database, this could take a while")
-            response = self.engine.execute(query)
+            response = self.perform_query(query, limit=limit)
             master_df = pd.DataFrame(response.fetchall())
             print("master_df created successfully.")
             self._master_df = master_df.copy()
@@ -197,6 +225,9 @@ class NumericalSensors:
         # List of sensors
         entities = list(sensors_num_df.index.get_level_values("entity").unique())
         self._entities = entities
+        if len(entities) == 0:
+            print("No sensor data available")
+            return
 
         # Pivot sensor dataframe for plotting
         sensors_num_df = sensors_num_df.pivot_table(
@@ -240,10 +271,27 @@ class NumericalSensors:
         corrs_all = corrs_all.drop_duplicates()
         return corrs_all
 
+    def export_to_csv(self, entities: List[str], filename="sensors.csv"):
+        """
+        Export selected sensor data to a csv.
+        
+        Parameters
+        ----------
+        filename : the name of the .csv file to create
+        entities : a list of numerical sensor entities
+        """
+        if not set(entities).issubset(set(self._sensors_num_df.columns.tolist())):
+            print("Invalid entities entered, aborting export_to_csv")
+            return
+        try:
+            self._sensors_num_df[entities].to_csv(path_or_buf=filename)
+            print(f"Successfully exported entered entities to {filename}")
+        except Exception as exc:
+            print(exc)
+
     def plot(self, entities: List[str]):
         """
         Basic plot of a numerical sensor data.
-        Attempts to unpack lists up to 2 deep.
 
         Parameters
         ----------
@@ -281,6 +329,9 @@ class BinarySensors:
         # List of sensors
         entities = list(binary_df.index.get_level_values("entity").unique())
         self._entities = entities
+        if len(entities) == 0:
+            print("No binary sensor data available")
+            return
 
         # Binarise
         binary_df["state"] = binary_df["state"].apply(

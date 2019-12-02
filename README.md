@@ -1,6 +1,6 @@
 [![PyPI Version](https://img.shields.io/pypi/v/HASS-data-detective.svg)](https://pypi.org/project/HASS-data-detective/)
 [![build status](http://img.shields.io/travis/robmarkcole/HASS-data-detective/master.svg?style=flat)](https://travis-ci.org/robmarkcole/HASS-data-detective)
-[![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/robmarkcole/HASS-data-detective/master?filepath=usage)
+[![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/robmarkcole/HASS-data-detective/master?filepath=notebooks)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/ambv/black)
 
 ## Introduction
@@ -9,7 +9,7 @@ The `HASS-data-detective` package, which we may also refer to as 'detective' or 
 **Note** that not all python packages can be installed on Hassio yet - [scipy](https://github.com/scipy/scipy) is in this category. Notable packages which have scipy as a dependency include Seaborn.
 
 ## Try out detective online
-You can try out detective online without installing anything. If you click on the 'launch binder' button above, detective will be started in a Docker container online using the [Binderhub](https://binderhub.readthedocs.io) service. Run the `usage.ipynb` notebook to explore detective, and you can also use the `Upload` button to upload your own `home-assistant_v2.db` database file for analysis. Note that all data is deleted when the container closes down, so this service is just for trying out detective.
+You can try out detective online without installing anything. If you click on the 'launch binder' button above, detective will be started in a Docker container online using the [Binderhub](https://binderhub.readthedocs.io) service. Run the `Usage of detective` notebook to explore detective, and you can also use the `Upload` button to upload your own `home-assistant_v2.db` database file for analysis. Note that all data is deleted when the container closes down, so this service is just for trying out detective.
 
 ## Installation on you machine
 You can either: `pip install HASS-data-detective` for the latest released version from pypi, or `pip install git+https://github.com/robmarkcole/HASS-data-detective.git --upgrade` for the bleeding edge version from github. Alternatively if you wish to contribute to the development of detective, clone this repository and install in editable mode with `pip install -e .`
@@ -20,7 +20,7 @@ Detective first needs to know the location of your database in order to initiali
 ```python
 from detective.core import HassDatabase
 
-db = detective.HassDatabase('sqlite:////' + 'path_to/home-assistant_v2.db')
+db = HassDatabase('sqlite:////' + 'path_to/home-assistant_v2.db') # on hassio path_to is config
 ```
 
 If you are running a database server for Home Assistant (e.g. mysql) you need to initialise the `HassDatabase` directly with [the correct connection string](https://www.home-assistant.io/components/recorder/#custom-database-engines), for example:
@@ -463,7 +463,7 @@ OK now we have demonstrated the basic classes and functionality of detective, le
 Lets analyse the **motion_at_home** binary sensor data. We first create features from the raw data for the day-of-the-week and time categories, then perform analysis on these features.
 
 ```python
-from detective.time is_weekday, time_category
+from detective.time import is_weekday, time_category
 
 motion_df = sensors_binary_df.data[['binary_sensor.motion_at_home']] # Must pass a list to return correctly indexed df
 
@@ -634,6 +634,7 @@ Seaborn is a python package for doing statistical plots. Unfortunately it is not
 
 ```python
 import seaborn as sns
+import matplotlib.pyplot as plt
 
 fig, ax = plt.subplots(figsize=(14, 6))
 days_list = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
